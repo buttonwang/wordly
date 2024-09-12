@@ -16,13 +16,6 @@ import { HelpCircle, Menu, Sun, Moon, Twitter, Infinity } from "lucide-react"
 import { useState, useCallback, useEffect } from "react"
 import { ErrorBoundary } from "react-error-boundary"
 
-// Mock word lists (replace with actual word lists in a real application)
-const wordLists = {
-  4: ['FINE', 'WORD', 'PLAY', 'GAME'],
-  5: ['HELLO', 'WORLD', 'REACT', 'GUESS'],
-  6: ['WORDLE', 'CODING', 'TYPING', 'LETTER']
-}
-
 type WordLength = 4 | 5 | 6
 
 interface GameState {
@@ -44,7 +37,39 @@ function ErrorFallback({error, resetErrorBoundary}) {
   )
 }
 
-export function WordleClone() {
+async function fetchWordFromDatamuse(length: WordLength): Promise<string> {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz'
+  const randomLetter = alphabet[Math.floor(Math.random() * alphabet.length)]
+  const pattern = `${randomLetter}${'?'.repeat(length - 1)}`
+  const url = `https://api.datamuse.com/words?sp=${pattern}&sort=frequency&max=30`
+  
+  const response = await fetch(url)
+  const words = await response.json()
+  
+  if (words.length === 0) {
+    throw new Error('No words found')
+  }
+  
+  const randomIndex = Math.floor(Math.random() * words.length)
+  return words[randomIndex].word.toUpperCase()
+}
+
+async function generateTargetWord(length: WordLength): Promise<string> {
+  try {
+    return await fetchWordFromDatamuse(length)
+  } catch (error) {
+    console.error('Error fetching word:', error)
+    // Fallback to a default word list if API fails
+    const fallbackWords = {
+      4: ['WORD', 'PLAY', 'GAME'],
+      5: ['HELLO', 'WORLD', 'REACT'],
+      6: ['WORDLE', 'CODING', 'TYPING']
+    }
+    return fallbackWords[length][Math.floor(Math.random() * fallbackWords[length].length)]
+  }
+}
+
+export default function WordleClone() {
   const [wordLength, setWordLength] = useState<WordLength>(5)
   const maxAttempts = 6
   const [isDarkMode, setIsDarkMode] = useState(false)
@@ -52,32 +77,66 @@ export function WordleClone() {
   const [nextWordTime, setNextWordTime] = useState({ hours: 0, minutes: 0, seconds: 0 })
   const [isUnlimitedMode, setIsUnlimitedMode] = useState(false)
   const [canStartNewGame, setCanStartNewGame] = useState(true)
+  const [isLoading, setIsLoading] = useState(true)
+  const [cooldownTime, setCooldownTime] = useState(0)
 
-  const [gameStates, setGameStates] = useState<{ [key in WordLength]: GameState }>({
-    4: initializeGameState(4),
-    5: initializeGameState(5),
-    6: initializeGameState(6)
+  const [gameStates, setGameStates] = useState<{ [key in WordLength]: GameState | null }>({
+    4: null,
+    5: null,
+    6: null
   })
 
-  function initializeGameState(length: WordLength): GameState {
+  async function initializeGameState(length: WordLength): Promise<GameState> {
+    const targetWord = await generateTargetWord(length)
     return {
       currentAttempt: 0,
       currentGuess: "",
       guesses: Array(maxAttempts).fill(""),
-      targetWord: generateTargetWord(length),
+      targetWord,
       gameStatus: 'playing',
       letterStatuses: {}
     }
   }
 
-  function generateTargetWord(length: WordLength): string {
-    const words = wordLists[length]
-    return words[Math.floor(Math.random() * words.length)]
-  }
+  useEffect(() => {
+    const initializeStates = async () => {
+      setIsLoading(true)
+      const savedState = localStorage.getItem('wordleState')
+      if (savedState) {
+        const parsedState = JSON.parse(savedState)
+        setGameStates(parsedState.gameStates)
+        setWordLength(parsedState.wordLength)
+        setIsUnlimitedMode(parsedState.isUnlimitedMode)
+        setIsDarkMode(parsedState.isDarkMode)
+      } else {
+        const initialStates = {
+          4: await initializeGameState(4),
+          5: await initializeGameState(5),
+          6: await initializeGameState(6)
+        }
+        setGameStates(initialStates)
+      }
+      setIsLoading(false)
+    }
+
+    initializeStates()
+  }, [])
+
+  useEffect(() => {
+    if (!isLoading) {
+      localStorage.setItem('wordleState', JSON.stringify({
+        gameStates,
+        wordLength,
+        isUnlimitedMode,
+        isDarkMode
+      }))
+    }
+  }, [gameStates, wordLength, isUnlimitedMode, isDarkMode, isLoading])
 
   const currentGameState = gameStates[wordLength]
 
   const validateGuess = useCallback((guess: string) => {
+    if (!currentGameState) return Array(wordLength).fill('absent')
     const result = Array(wordLength).fill('absent')
     const targetLetters = currentGameState.targetWord.split('')
     
@@ -85,7 +144,7 @@ export function WordleClone() {
     for (let i = 0; i < wordLength; i++) {
       if (guess[i] === targetLetters[i]) {
         result[i] = 'correct'
-        targetLetters[i] = ''
+        targetLetters[i] = null
       }
     }
     
@@ -93,38 +152,50 @@ export function WordleClone() {
     for (let i = 0; i < wordLength; i++) {
       if (result[i] !== 'correct' && targetLetters.includes(guess[i])) {
         result[i] = 'present'
-        targetLetters[targetLetters.indexOf(guess[i])] = ''
+        targetLetters[targetLetters.indexOf(guess[i])] = null
       }
     }
     
     return result
-  }, [currentGameState.targetWord, wordLength])
+  }, [currentGameState, wordLength])
 
-  const startNewGame = useCallback(() => {
-    if (!canStartNewGame) return
+  const startNewGame = useCallback(async () => {
+    if (!canStartNewGame && !isUnlimitedMode) return
+    const newGameState = await initializeGameState(wordLength)
     setGameStates(prevStates => ({
       ...prevStates,
-      [wordLength]: initializeGameState(wordLength)
+      [wordLength]: newGameState
     }))
     setCanStartNewGame(false)
-  }, [wordLength, canStartNewGame])
+    if (isUnlimitedMode) {
+      setCooldownTime(30)
+    }
+  }, [wordLength, canStartNewGame, isUnlimitedMode])
 
   const handleGameOver = useCallback(() => {
     if (isUnlimitedMode) {
-      setTimeout(() => {
-        startNewGame()
-        setCanStartNewGame(true)
-      }, 2000)
+      setCooldownTime(30)
+      const timer = setInterval(() => {
+        setCooldownTime((prevTime) => {
+          if (prevTime <= 1) {
+            clearInterval(timer)
+            setCanStartNewGame(true)
+            return 0
+          }
+          return prevTime - 1
+        })
+      }, 1000)
     } else {
-      setTimeout(() => setCanStartNewGame(true), 5 * 60 * 1000) // 5 minutes cooldown
+      setTimeout(() => setCanStartNewGame(true), 5 * 60 * 1000) // 5 minutes cooldown for Limited Mode
     }
-  }, [isUnlimitedMode, startNewGame])
+  }, [isUnlimitedMode])
 
   const handleKeyPress = useCallback((key: string) => {
-    if (currentGameState.gameStatus !== 'playing') return
+    if (!currentGameState || currentGameState.gameStatus !== 'playing') return
 
     setGameStates(prevStates => {
       const newState = { ...prevStates[wordLength] }
+      if (!newState) return prevStates
 
       if (key === "Backspace" || key === "←") {
         newState.currentGuess = newState.currentGuess.slice(0, -1)
@@ -161,7 +232,7 @@ export function WordleClone() {
 
       return { ...prevStates, [wordLength]: newState }
     })
-  }, [currentGameState.gameStatus, validateGuess, wordLength, handleGameOver])
+  }, [currentGameState, validateGuess, wordLength, handleGameOver])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -192,7 +263,7 @@ export function WordleClone() {
   }, [])
 
   const getLetterStyle = (letter: string, index: number, rowIndex: number) => {
-    if (rowIndex >= currentGameState.currentAttempt && currentGameState.gameStatus === 'playing') return 'bg-white dark:bg-gray-800'
+    if (!currentGameState || rowIndex >= currentGameState.currentAttempt && currentGameState.gameStatus === 'playing') return 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
     const validation = validateGuess(currentGameState.guesses[rowIndex])
     switch (validation[index]) {
       case 'correct': return 'bg-green-500 text-white'
@@ -210,36 +281,52 @@ export function WordleClone() {
     return `${time.hours > 0 ? `${time.hours}h ` : ''}${time.minutes}m ${time.seconds}s`
   }
 
+  const handleModeChange = async (newMode: boolean) => {
+    setIsUnlimitedMode(newMode)
+    if (newMode) {
+      // Switching to Unlimited Mode
+      await startNewGame() // Start a new game immediately when switching to Unlimited Mode
+    } else {
+      // Switching to Limited Mode
+      setCanStartNewGame(false)
+      setTimeout(() => setCanStartNewGame(true), 5 * 60 * 1000) // 5 minutes cooldown
+    }
+  }
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>
+  }
+
   return (
-    <ErrorBoundary FallbackComponent={ErrorFallback} onReset={() => {
-      // Reset the game state when the error boundary is reset
-      setGameStates({
-        4: initializeGameState(4),
-        5: initializeGameState(5),
-        6: initializeGameState(6)
-      })
+    <ErrorBoundary FallbackComponent={ErrorFallback} onReset={async () => {
+      const initialStates = {
+        4: await initializeGameState(4),
+        5: await initializeGameState(5),
+        6: await initializeGameState(6)
+      }
+      setGameStates(initialStates)
     }}>
       <div className={`flex flex-col min-h-screen ${isDarkMode ? 'dark' : ''}`}>
-        <div className="flex-1 bg-background dark:bg-gray-900 transition-colors duration-200">
-          <header className="flex justify-between items-center p-4 border-b dark:border-gray-700">
+        <div className="flex-1 bg-white dark:bg-gray-900 transition-colors duration-200">
+          <header className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
             <Button variant="ghost" size="icon" onClick={() => setIsHelpOpen(true)}>
-              <HelpCircle className="h-6 w-6 dark:text-gray-300" />
+              <HelpCircle className="h-6 w-6 text-gray-600 dark:text-gray-300" />
               <span className="sr-only">Help</span>
             </Button>
-            <h1 className="text-xl font-bold dark:text-white">WORDLE IN ENGLISH</h1>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white">WORDLY IN ENGLISH</h1>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" onClick={toggleTheme}>
                 {isDarkMode ? <Sun className="h-6 w-6 text-yellow-500" /> : <Moon className="h-6 w-6 text-gray-500" />}
                 <span className="sr-only">Toggle theme</span>
               </Button>
               <Button variant="ghost" size="icon">
-                <Menu className="h-6 w-6 dark:text-gray-300" />
+                <Menu className="h-6 w-6 text-gray-600 dark:text-gray-300" />
                 <span className="sr-only">Menu</span>
               </Button>
             </div>
           </header>
           
-          <main className="flex-1 flex flex-col items-center justify-between p-4">
+          <main className="flex-1 flex flex-col items-center justify-between p-4 max-w-lg mx-auto">
             <div className="flex gap-2 mb-8">
               {[4, 5, 6].map((num) => (
                 <Button
@@ -255,13 +342,13 @@ export function WordleClone() {
               ))}
             </div>
             
-            <Card className="w-full max-w-sm p-4 bg-white dark:bg-gray-800">
-              {[...Array(maxAttempts)].map((_, rowIndex) => (
+            <Card className="w-full p-4 bg-white dark:bg-gray-800 shadow-md">
+              {currentGameState && [...Array(maxAttempts)].map((_, rowIndex) => (
                 <div key={rowIndex} className="flex justify-center gap-2 mb-2">
                   {[...Array(wordLength)].map((_, colIndex) => (
                     <div
                       key={colIndex}
-                      className={`w-12 h-12 border-2 flex items-center justify-center text-2xl font-bold
+                      className={`w-10 h-10 sm:w-12 sm:h-12 border-2 flex items-center justify-center text-xl sm:text-2xl font-bold
                         ${rowIndex === currentGameState.currentAttempt && currentGameState.gameStatus === 'playing' ? 'border-gray-500 dark:border-gray-400' : 'border-gray-300 dark:border-gray-600'}
                         ${getLetterStyle(currentGameState.guesses[rowIndex][colIndex], colIndex, rowIndex)}
                       `}
@@ -277,24 +364,32 @@ export function WordleClone() {
               ))}
             </Card>
             
-            {currentGameState.gameStatus === 'won' && <div className="text-green-500 font-bold mt-4">Congratulations! You guessed the word!</div>}
-            {currentGameState.gameStatus === 'lost' && <div className="text-red-500 font-bold mt-4 dark:text-red-400">Game over. The word was {currentGameState.targetWord}.</div>}
+            {currentGameState && currentGameState.gameStatus === 'won' && <div className="text-green-500 font-bold mt-4">Congratulations! You guessed the word!</div>}
+            {currentGameState && currentGameState.gameStatus === 'lost' && <div className="text-red-500 font-bold mt-4">Game over. The word was {currentGameState.targetWord}.</div>}
             
-            {(currentGameState.gameStatus === 'won' || currentGameState.gameStatus === 'lost') && !isUnlimitedMode && (
+            {currentGameState && (currentGameState.gameStatus === 'won' || currentGameState.gameStatus === 'lost') && (
               <div className="mt-4">
-                {canStartNewGame ? (
-                  <Button onClick={startNewGame}>New Game</Button>
+                {isUnlimitedMode ? (
+                  cooldownTime > 0 ? (
+                    <p className="text-gray-700 dark:text-gray-300">Next game available in: {cooldownTime} seconds</p>
+                  ) : (
+                    <Button onClick={startNewGame}>New Game</Button>
+                  )
                 ) : (
-                  <p>Next game available in: {formatTime(nextWordTime)}</p>
+                  canStartNewGame ? (
+                    <Button onClick={startNewGame}>New Game</Button>
+                  ) : (
+                    <p className="text-gray-700 dark:text-gray-300">Next game available in: {formatTime(nextWordTime)}</p>
+                  )
                 )}
               </div>
             )}
             
-            <div className="w-full max-w-lg mt-8">
+            <div className="w-full mt-8">
               {['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'].map((row, index) => (
                 <div key={index} className="flex justify-center gap-1 mb-2">
                   {index === 2 && (
-                    <Button className="w-16 h-14 dark:bg-gray-700 dark:text-white" onClick={() => handleKeyPress("ENTER")}>
+                    <Button className="w-12 h-10 sm:w-16 sm:h-14 text-xs sm:text-sm dark:bg-gray-700 dark:text-white" onClick={() => handleKeyPress("ENTER")}>
                       ENTER
                     </Button>
                   )}
@@ -302,10 +397,10 @@ export function WordleClone() {
                     <Button
                       key={letter}
                       variant="outline"
-                      className={`w-10 h-14 ${
-                        currentGameState.letterStatuses[letter] === 'correct' ? 'bg-green-500 text-white' :
-                        currentGameState.letterStatuses[letter] === 'present' ? 'bg-yellow-500 text-white' :
-                        currentGameState.letterStatuses[letter] === 'absent' ? 'bg-gray-300 text-gray-700 dark:bg-gray-600 dark:text-gray-300' :
+                      className={`w-7 h-10 sm:w-10 sm:h-14 text-xs sm:text-sm ${
+                        currentGameState && currentGameState.letterStatuses[letter] === 'correct' ? 'bg-green-500 text-white' :
+                        currentGameState && currentGameState.letterStatuses[letter] === 'present' ? 'bg-yellow-500 text-white' :
+                        currentGameState && currentGameState.letterStatuses[letter] === 'absent' ? 'bg-gray-300 text-gray-700 dark:bg-gray-600 dark:text-gray-300' :
                         'dark:bg-gray-700 dark:text-white'
                       }`}
                       onClick={() => handleKeyPress(letter)}
@@ -314,7 +409,7 @@ export function WordleClone() {
                     </Button>
                   ))}
                   {index === 2 && (
-                    <Button className="w-16 h-14 dark:bg-gray-700 dark:text-white" onClick={() => handleKeyPress("←")}>
+                    <Button className="w-12 h-10 sm:w-16 sm:h-14 text-xs sm:text-sm dark:bg-gray-700 dark:text-white" onClick={() => handleKeyPress("←")}>
                       ←
                     </Button>
                   )}
@@ -326,9 +421,9 @@ export function WordleClone() {
               <Switch
                 id="unlimited-mode"
                 checked={isUnlimitedMode}
-                onCheckedChange={setIsUnlimitedMode}
+                onCheckedChange={handleModeChange}
               />
-              <Label htmlFor="unlimited-mode" className="flex items-center space-x-2">
+              <Label htmlFor="unlimited-mode" className="flex items-center space-x-2 text-gray-700 dark:text-gray-300">
                 <Infinity className="h-4 w-4" />
                 <span>Unlimited Mode</span>
               </Label>
@@ -360,13 +455,13 @@ export function WordleClone() {
                 <p className="mb-4">Next daily word in: {formatTime(nextWordTime)}</p>
                 <p className="mb-4">
                   <Infinity className="inline-block h-4 w-4 mr-2" />
-                  Unlimited Mode: Keep playing without waiting for the next word!
+                  Unlimited Mode: Wait 30 seconds between games!
                 </p>
                 <p className="mb-4">
                   Limited Mode: Wait 5 minutes between games or until the next daily word.
                 </p>
-                <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="flex items-center text-blue-500 hover:text-blue-600">
-                  <Twitter className="mr-2" /> Follow us on Twitter
+                <a href="https://x.com/buttonwang" target="_blank" rel="noopener noreferrer" className="flex items-center text-blue-500 hover:text-blue-600">
+                  <Twitter className="mr-2" /> Follow us on X
                 </a>
               </DialogDescription>
               <DialogFooter>

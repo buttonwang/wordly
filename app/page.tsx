@@ -1,5 +1,5 @@
-import { WordleClone } from "@/components/wordle-clone"
+import  Wordly  from "@/components/wordly"
 
 export default function Page() {
-  return <WordleClone />
+  return <Wordly />
 }
