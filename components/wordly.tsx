@@ -42,14 +42,14 @@ async function fetchWordFromDatamuse(length: WordLength): Promise<string> {
   const randomLetter = alphabet[Math.floor(Math.random() * alphabet.length)]
   const pattern = `${randomLetter}${'?'.repeat(length - 1)}`
   const url = `https://api.datamuse.com/words?sp=${pattern}&sort=frequency&max=30`
-  
+
   const response = await fetch(url)
   const words = await response.json()
-  
+
   if (words.length === 0) {
     throw new Error('No words found')
   }
-  
+
   const randomIndex = Math.floor(Math.random() * words.length)
   return words[randomIndex].word.toUpperCase()
 }
@@ -160,17 +160,24 @@ export default function WordleClone() {
   }, [currentGameState, wordLength])
 
   const startNewGame = useCallback(async () => {
-    if (!canStartNewGame && !isUnlimitedMode) return
-    const newGameState = await initializeGameState(wordLength)
-    setGameStates(prevStates => ({
-      ...prevStates,
-      [wordLength]: newGameState
-    }))
-    setCanStartNewGame(false)
-    if (isUnlimitedMode) {
-      setCooldownTime(30)
+    if (!isUnlimitedMode || cooldownTime > 0) return
+    const newStates = {
+      4: await initializeGameState(4),
+      5: await initializeGameState(5),
+      6: await initializeGameState(6)
     }
-  }, [wordLength, canStartNewGame, isUnlimitedMode])
+    setGameStates(newStates)
+    setCooldownTime(30)
+    const timer = setInterval(() => {
+      setCooldownTime((prevTime) => {
+        if (prevTime <= 1) {
+          clearInterval(timer)
+          return 0
+        }
+        return prevTime - 1
+      })
+    }, 1000)
+  }, [isUnlimitedMode, cooldownTime])
 
   const handleGameOver = useCallback(() => {
     if (isUnlimitedMode) {
@@ -179,14 +186,11 @@ export default function WordleClone() {
         setCooldownTime((prevTime) => {
           if (prevTime <= 1) {
             clearInterval(timer)
-            setCanStartNewGame(true)
             return 0
           }
           return prevTime - 1
         })
       }, 1000)
-    } else {
-      setTimeout(() => setCanStartNewGame(true), 5 * 60 * 1000) // 5 minutes cooldown for Limited Mode
     }
   }, [isUnlimitedMode])
 
@@ -288,8 +292,12 @@ export default function WordleClone() {
       await startNewGame() // Start a new game immediately when switching to Unlimited Mode
     } else {
       // Switching to Limited Mode
-      setCanStartNewGame(false)
-      setTimeout(() => setCanStartNewGame(true), 5 * 60 * 1000) // 5 minutes cooldown
+      const newStates = {
+        4: await initializeGameState(4),
+        5: await initializeGameState(5),
+        6: await initializeGameState(6)
+      }
+      setGameStates(newStates)
     }
   }
 
@@ -376,11 +384,7 @@ export default function WordleClone() {
                     <Button onClick={startNewGame}>New Game</Button>
                   )
                 ) : (
-                  canStartNewGame ? (
-                    <Button onClick={startNewGame}>New Game</Button>
-                  ) : (
-                    <p className="text-gray-700 dark:text-gray-300">Next game available in: {formatTime(nextWordTime)}</p>
-                  )
+                  <p className="text-gray-700 dark:text-gray-300">Next game available in: {formatTime(nextWordTime)}</p>
                 )}
               </div>
             )}
@@ -458,7 +462,7 @@ export default function WordleClone() {
                   Unlimited Mode: Wait 30 seconds between games!
                 </p>
                 <p className="mb-4">
-                  Limited Mode: Wait 5 minutes between games or until the next daily word.
+                  Limited Mode: Wait until the next daily word.
                 </p>
                 <a href="https://x.com/buttonwang" target="_blank" rel="noopener noreferrer" className="flex items-center text-blue-500 hover:text-blue-600">
                   <Twitter className="mr-2" /> Follow us on X
