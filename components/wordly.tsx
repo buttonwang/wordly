@@ -76,7 +76,7 @@ export default function WordleClone() {
   const [isHelpOpen, setIsHelpOpen] = useState(false)
   const [nextWordTime, setNextWordTime] = useState({ hours: 0, minutes: 0, seconds: 0 })
   const [isUnlimitedMode, setIsUnlimitedMode] = useState(false)
-  const [canStartNewGame, setCanStartNewGame] = useState(true)
+  //const [canStartNewGame, setCanStartNewGame] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
   const [cooldownTime, setCooldownTime] = useState(0)
 
