@@ -76,9 +76,8 @@ export default function WordleClone() {
   const [isHelpOpen, setIsHelpOpen] = useState(false)
   const [nextWordTime, setNextWordTime] = useState({ hours: 0, minutes: 0, seconds: 0 })
   const [isUnlimitedMode, setIsUnlimitedMode] = useState(false)
-  //const [canStartNewGame, setCanStartNewGame] = useState(true)
-  const [isLoading, setIsLoading] = useState(true)
   const [cooldownTime, setCooldownTime] = useState(0)
+  const [isLoading, setIsLoading] = useState(true)
 
   const [gameStates, setGameStates] = useState<{ [key in WordLength]: GameState | null }>({
     4: null,
@@ -254,6 +253,7 @@ export default function WordleClone() {
     const timer = setInterval(() => {
       const now = new Date()
       const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      tomorrow.setHours(0, 0, 0, 0)
       const diff = tomorrow.getTime() - now.getTime()
       
       const hours = Math.floor(diff / (1000 * 60 * 60))
@@ -261,10 +261,23 @@ export default function WordleClone() {
       const seconds = Math.floor((diff % (1000 * 60)) / 1000)
       
       setNextWordTime({ hours, minutes, seconds })
+
+      // Reset game state at midnight
+      if (hours === 0 && minutes === 0 && seconds === 0 && !isUnlimitedMode) {
+        const resetStates = async () => {
+          const newStates = {
+            4: await initializeGameState(4),
+            5: await initializeGameState(5),
+            6: await initializeGameState(6)
+          }
+          setGameStates(newStates)
+        }
+        resetStates()
+      }
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [])
+  }, [isUnlimitedMode])
 
   const getLetterStyle = (letter: string, index: number, rowIndex: number) => {
     if (!currentGameState || rowIndex >= currentGameState.currentAttempt && currentGameState.gameStatus === 'playing') return 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
@@ -390,18 +403,13 @@ export default function WordleClone() {
             )}
             
             <div className="w-full mt-8">
-              {['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'].map((row, index) => (
+              {['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM←'].map((row, index) => (
                 <div key={index} className="flex justify-center gap-1 mb-2">
-                  {index === 2 && (
-                    <Button className="w-12 h-10 sm:w-16 sm:h-14 text-xs sm:text-sm dark:bg-gray-700 dark:text-white" onClick={() => handleKeyPress("ENTER")}>
-                      ENTER
-                    </Button>
-                  )}
                   {row.split('').map((letter) => (
                     <Button
                       key={letter}
                       variant="outline"
-                      className={`w-7 h-10 sm:w-10 sm:h-14 text-xs sm:text-sm ${
+                      className={`${letter === '←' || letter === 'ENTER' ? 'w-16' : 'w-8'} h-10 sm:h-14 text-xs sm:text-sm ${
                         currentGameState && currentGameState.letterStatuses[letter] === 'correct' ? 'bg-green-500 text-white' :
                         currentGameState && currentGameState.letterStatuses[letter] === 'present' ? 'bg-yellow-500 text-white' :
                         currentGameState && currentGameState.letterStatuses[letter] === 'absent' ? 'bg-gray-300 text-gray-700 dark:bg-gray-600 dark:text-gray-300' :
@@ -413,8 +421,11 @@ export default function WordleClone() {
                     </Button>
                   ))}
                   {index === 2 && (
-                    <Button className="w-12 h-10 sm:w-16 sm:h-14 text-xs sm:text-sm dark:bg-gray-700 dark:text-white" onClick={() => handleKeyPress("←")}>
-                      ←
+                    <Button
+                      className="w-16 h-10 sm:h-14 text-xs sm:text-sm dark:bg-gray-700 dark:text-white"
+                      onClick={() => handleKeyPress("ENTER")}
+                    >
+                      ENTER
                     </Button>
                   )}
                 </div>
@@ -441,7 +452,7 @@ export default function WordleClone() {
               </DialogHeader>
               <DialogDescription>
                 <p className="mb-4">Guess the word in six tries. New word every day! Each try has to be a valid word.</p>
-                <p className="mb-4">Hit the CHECK button or ENTER on the keyboard to check your answer.</p>
+                <p className="mb-4">Hit the ENTER button or ENTER on the keyboard to check your answer.</p>
                 <div className="mb-4">
                   <div className="flex items-center mb-2">
                     <div className="w-8 h-8 bg-green-500 text-white flex items-center justify-center mr-2">A</div>
